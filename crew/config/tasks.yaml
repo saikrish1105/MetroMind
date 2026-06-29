@@ -1,0 +1,101 @@
+# crew/config/tasks.yaml
+#
+# Task description / expected_output prompts. Same idea as agents.yaml —
+# text only, no Python. {query} is filled in at runtime from the inputs
+# dict passed to crew.kickoff(inputs={"query": "..."}).
+#
+# Which agent owns each task, and which tasks actually run for a given
+# query, is wired in crew/flow.py (a CrewAI Flow) — NOT by listing every
+# task in one Crew. See crew/flow.py's module docstring for why.
+
+route_query_task:
+  description: >
+    A user submitted the following query to the Chennai Metro Assistant:
+
+    "{query}"
+
+    Classify it into EXACTLY ONE of these categories:
+      - "info": general FAQ-style questions about the metro (rules,
+        policies, facilities, luggage, timings-in-general, lost & found,
+        etc.) — anything that is NOT a station-to-station route or fare
+        question.
+      - "train": questions about how to travel between two named
+        stations (which line, which direction, where to change), and/or
+        what the fare/ticket price is between two stations.
+      - "support": the user wants to raise a complaint, report an issue,
+        or get help with a problem (e.g. lost item, faulty gate, refund).
+      - "travel_history": the user is asking about their own past trips,
+        card balance/recharge history, or travel statements.
+      - "unsupported": the query doesn't fit any of the above, or is
+        unrelated to the Chennai Metro.
+
+    Respond with ONLY the category string in the "category" field. Do not
+    attempt to answer the user's actual question.
+  expected_output: >
+    A single category value: one of "info", "train", "support",
+    "travel_history", or "unsupported".
+
+answer_faq_task:
+  description: >
+    Answer the following user query using the Info Agent's retrieval tool:
+
+    "{query}"
+
+    Use qdrant_fetch_from_collection to retrieve relevant chunks from the
+    metro FAQ knowledge base before answering. Ground your answer strictly
+    in the retrieved text — do not add facts that aren't supported by it.
+    If nothing relevant is retrieved, say clearly that you don't have
+    information on that topic.
+  expected_output: >
+    A clear, natural-language answer to the user's question, grounded in
+    retrieved FAQ content, with no fabricated details. If no relevant
+    information was found, an honest statement to that effect instead of a
+    fabricated answer.
+
+train_info_task:
+  description: >
+    Answer the following user query using your routing and/or fare tools:
+
+    "{query}"
+
+    First, decide what the query is actually asking:
+      - If it asks how to get from one station to another, which line(s)
+        to take, or which direction to travel: call get_route. Do NOT
+        call get_fare.
+      - If it asks how much a journey costs, or what the fare/ticket price
+        is between two stations: call get_fare. Do NOT call get_route.
+      - If it asks both (e.g. "how do I get to X and what's the fare"):
+        call BOTH tools and answer both parts.
+
+    Extract the exact station name(s) mentioned in the query before
+    calling any tool. If a tool reports a station name as unrecognized,
+    tell the user clearly rather than guessing a substitute name.
+
+    When describing a route, phrase it the way a real metro announcement
+    would: name the line and the terminal station in the direction of
+    travel (e.g. "take the Blue Line towards Wimco Nagar Depot"), using
+    only the station and line names returned by get_route. Never invent,
+    abbreviate, or guess a station/line name that wasn't in the tool's
+    output.
+  expected_output: >
+    A clear, natural-language answer covering exactly what the query
+    asked — route directions, fare, or both. Route directions are phrased
+    in real metro-announcement style (line + direction-towards-terminal +
+    where to change lines), using only station/line names returned by the
+    tools. If a station name couldn't be resolved, an honest statement to
+    that effect instead of a guessed answer.
+
+unsupported_task:
+  description: >
+    A user submitted the following query to the Chennai Metro Assistant:
+
+    "{query}"
+
+    This query was classified as "{category}", which is not implemented
+    yet (only "info" and "train" are currently available). Note which
+    specialist agent *would* eventually handle this category, and tell
+    the user plainly that it isn't available yet — do not attempt to
+    actually answer the underlying question.
+  expected_output: >
+    A short, honest message stating that this type of request isn't
+    supported yet, naming which specialist would eventually handle it.

@@ -1,0 +1,97 @@
+# docker-compose.yml — Chennai Metro Assistant backing data stores
+#
+# This brings up ONLY the three databases the project depends on:
+#   - Qdrant   (vector DB — Info Agent's FAQ knowledge base)
+#   - Neo4j    (graph DB  — Train Info Agent's routing tool)
+#   - Postgres (relational DB — Train Info Agent's fare lookup tool)
+#
+# It deliberately does NOT include:
+#   - Ollama        — runs natively on your host (not in Docker), so it can
+#                      use your GPU/CPU directly without container passthrough
+#                      headaches. Install separately: https://ollama.com
+#   - The MCP servers (qdrant_mcp, graph_mcp, fare_mcp) — these are not
+#                      long-running services. CrewAI spawns each one as a
+#                      short-lived stdio subprocess itself
+#                      (see crew/crew.py's MCPServerStdio(...) calls), so
+#                      they have no business being separate containers.
+#   - The crew/Flow itself — you run that with `python -m crew.main "..."`
+#                      from your venv, not from a container, in this setup.
+#
+# All credentials below match the defaults already hardcoded in
+# common/settings.py, so this works with ZERO .env file. If you DO set a
+# .env that overrides any *_PASSWORD / *_USER / *_DB value, update the
+# matching value below to match — these are two independent places that
+# both need to agree (Python reads .env; Docker reads this file).
+#
+# Usage:
+#   docker compose up -d        # start all three in the background
+#   docker compose ps           # check status / health
+#   docker compose logs -f      # tail logs for all three
+#   docker compose down         # stop (keeps data — see volumes below)
+#   docker compose down -v      # stop AND wipe all data (fresh start)
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: metro-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST API — matches QDRANT_HOST/QDRANT_PORT in settings.py
+      - "6334:6334"   # gRPC (unused by this project today, exposed for convenience)
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    # No Docker healthcheck here on purpose: Qdrant's official image ships
+    # neither curl/wget nor bash (minimal image, intentional per their own
+    # GitHub issue tracker), so a HEALTHCHECK directive would just fail
+    # for the wrong reason and report "unhealthy" on a perfectly fine
+    # container. Use `docker compose logs qdrant` or hit
+    # http://localhost:6333/healthz from your host instead.
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: metro-neo4j
+    restart: unless-stopped
+    environment:
+      # Must match NEO4J_USER / NEO4J_PASSWORD defaults in common/settings.py
+      # (neo4j / password123). Format is always "<user>/<password>", and
+      # Neo4j Community Edition only supports the single "neo4j" username.
+      NEO4J_AUTH: neo4j/password123
+    ports:
+      - "7474:7474"   # Browser UI (HTTP) — http://localhost:7474
+      - "7687:7687"   # Bolt protocol — matches NEO4J_URI in settings.py
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p password123 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  postgres:
+    image: postgres:16
+    container_name: metro-postgres
+    restart: unless-stopped
+    environment:
+      # Must match POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB defaults
+      # in common/settings.py.
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: chennai_metro
+    ports:
+      - "5432:5432"   # matches POSTGRES_HOST/POSTGRES_PORT in settings.py
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d chennai_metro"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  qdrant_storage:
+  neo4j_data:
+  neo4j_logs:
+  postgres_data:
